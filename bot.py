@@ -1,51 +1,34 @@
 import os
-import asyncio
 import re
 import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import BufferedInputFile
-from aiogram.filters import Command
+from telegram import Update, BufferedInputFile
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable not set")
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+    raise ValueError("BOT_TOKEN not set")
 
 def parse_credential(line: str):
-    """Extract (identifier, password) from messy line."""
     line = line.strip()
     if not line:
         return None
 
-    # Remove common non‑credential prefixes
+    # Remove prefixes
     line = re.sub(r'^(BD|signup|admin|login)\s*[:]?\s*', '', line, flags=re.I)
-
     parts = line.split(':')
     clean_parts = []
     for p in parts:
         p = p.strip()
-        if not p:
+        if not p or '://' in p:
             continue
-        # Skip URLs with protocol
-        if '://' in p:
-            continue
-        # Skip domain/path fragments without '@' (e.g. "ft.education")
         if re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(/.*)?$', p) and '@' not in p:
             continue
         clean_parts.append(p)
 
     if len(clean_parts) >= 2:
-        password = clean_parts[-1]
-        identifier = clean_parts[-2]
-        if identifier and password:
-            return (identifier, password)
+        return (clean_parts[-2], clean_parts[-1])
 
-    # Fallback: split by spaces/tabs
     if ' ' in line or '\t' in line:
         parts = re.split(r'[\t\s]+', line)
         if len(parts) >= 2:
@@ -53,30 +36,24 @@ def parse_credential(line: str):
             password = parts[-1].strip()
             if identifier and password and not re.match(r'^https?://', identifier):
                 return (identifier, password)
-
     return None
 
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer(
-        "👋 Send me a list of credentials (as text or .txt).\n\n"
-        "I will extract:\n"
-        "• email:pass\n• user:pass\n• number:pass\n\n"
-        "Example:\n`user:pass`\n`https://site.com:user:pass`"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Send me credentials (text or .txt).\n"
+        "I'll extract email:pass / user:pass / number:pass"
     )
 
-@dp.message(lambda msg: msg.document or (msg.text and len(msg.text) > 5))
-async def handle_input(message: types.Message):
-    if message.document:
-        file = await bot.get_file(message.document.file_id)
-        content = await bot.download_file(file.file_path)
-        text = content.read().decode("utf-8", errors="ignore")
+async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.document:
+        file = await update.message.document.get_file()
+        content = await file.download_as_bytearray()
+        text = content.decode("utf-8", errors="ignore")
     else:
-        text = message.text
+        text = update.message.text
 
     lines = text.strip().splitlines()
-    parsed = []
-    unparsed = []
+    parsed, unparsed = [], []
 
     for line in lines:
         result = parse_credential(line)
@@ -86,7 +63,6 @@ async def handle_input(message: types.Message):
             if line.strip():
                 unparsed.append(line.strip())
 
-    # Remove duplicates (case‑insensitive identifier)
     seen = set()
     unique = []
     for identifier, password in parsed:
@@ -96,36 +72,32 @@ async def handle_input(message: types.Message):
             unique.append((identifier, password))
 
     if not unique:
-        await message.answer("❌ No valid `identifier:password` pairs found.")
+        await update.message.reply_text("❌ No valid pairs found.")
         return
 
-    output_lines = [f"{user}:{pwd}" for user, pwd in unique]
-    output_text = "\n".join(output_lines)
+    output_text = "\n".join([f"{u}:{p}" for u, p in unique])
     file_bytes = output_text.encode("utf-8")
-    input_file = BufferedInputFile(file_bytes, filename="combolist.txt")
 
-    preview_lines = output_lines[:5]
-    preview = "\n".join(preview_lines)
-    if len(output_lines) > 5:
+    preview = "\n".join([f"{u}:{p}" for u, p in unique[:5]])
+    if len(unique) > 5:
         preview += "\n..."
 
     caption = (
-        f"✅ Parsed {len(lines)} lines total.\n"
-        f"📦 Found {len(unique)} unique valid pairs.\n"
-        f"⚠️ {len(unparsed)} lines could not be parsed.\n\n"
-        f"Preview:\n{preview}"
+        f"✅ Parsed {len(lines)} lines.\n"
+        f"📦 Found {len(unique)} unique.\n"
+        f"⚠️ {len(unparsed)} unparsed.\n\nPreview:\n{preview}"
     )
 
-    await message.answer_document(input_file, caption=caption)
+    await update.message.reply_document(
+        BufferedInputFile(file_bytes, filename="combolist.txt"),
+        caption=caption
+    )
 
-    if unparsed:
-        unparsed_preview = "\n".join(unparsed[:5])
-        if len(unparsed) > 5:
-            unparsed_preview += "\n..."
-        await message.answer(f"⚠️ Unparsed lines (first 5):\n{unparsed_preview}")
-
-async def main():
-    await dp.start_polling(bot)
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_input))
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
