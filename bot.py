@@ -1,7 +1,8 @@
 import os
 import re
 import logging
-from telegram import Update, BufferedInputFile
+import io
+from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +15,6 @@ def parse_credential(line: str):
     if not line:
         return None
 
-    # Remove prefixes
     line = re.sub(r'^(BD|signup|admin|login)\s*[:]?\s*', '', line, flags=re.I)
     parts = line.split(':')
     clean_parts = []
@@ -77,6 +77,10 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     output_text = "\n".join([f"{u}:{p}" for u, p in unique])
     file_bytes = output_text.encode("utf-8")
+    
+    # Use InputFile with BytesIO instead of BufferedInputFile
+    file_obj = io.BytesIO(file_bytes)
+    file_obj.name = "combolist.txt"  # Set filename
 
     preview = "\n".join([f"{u}:{p}" for u, p in unique[:5]])
     if len(unique) > 5:
@@ -89,7 +93,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_document(
-        BufferedInputFile(file_bytes, filename="combolist.txt"),
+        InputFile(file_obj, filename="combolist.txt"),
         caption=caption
     )
 
