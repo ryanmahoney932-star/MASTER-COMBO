@@ -77,10 +77,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     output_text = "\n".join([f"{u}:{p}" for u, p in unique])
     file_bytes = output_text.encode("utf-8")
-    
-    # Use InputFile with BytesIO instead of BufferedInputFile
     file_obj = io.BytesIO(file_bytes)
-    file_obj.name = "combolist.txt"  # Set filename
+    file_obj.name = "combolist.txt"
 
     preview = "\n".join([f"{u}:{p}" for u, p in unique[:5]])
     if len(unique) > 5:
